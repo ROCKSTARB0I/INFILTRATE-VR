@@ -52,3 +52,4 @@ button:disabled{opacity:.35;cursor:default}
 #obj s{opacity:.5}
 #ammo{position:absolute;right:20px;bottom:44px;font-weight:bold;font-size:26px;letter-spacing:.06em;text-shadow:0 1px 4px #000}
 #hp{top:12px}
+#pausedNote{position:absolute;left:50%;bottom:90px;transform:translateX(-50%);padding:8px 16px;border-radius:4px;background:rgba(10,12,14,.85);color:#c8d64a;font-weight:bold;letter-spacing:.1em}
