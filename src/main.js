@@ -1,10 +1,10 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=2';
-import { Dummy, faceTex } from './ragdoll.js?v=2';
-import { Gore } from './gore.js?v=2';
-import { sfx, music } from './audio.js?v=2';
-import { buildFacility, findPath, walkable, ROOMS, EXFIL, START, HALF as FHALF } from './facility.js?v=2';
-import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=2';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=3';
+import { Dummy, faceTex } from './ragdoll.js?v=3';
+import { Gore } from './gore.js?v=3';
+import { sfx, music } from './audio.js?v=3';
+import { buildFacility, findPath, walkable, ROOMS, EXFIL, START, HALF as FHALF } from './facility.js?v=3';
+import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=3';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -2028,7 +2028,8 @@ let hudKey = '';
 applyHands();
 // how exposed you are right now
 function stealthStatus() {
-  if (OPS.alarm > 0) return ['ALARM ' + Math.ceil(OPS.alarm), '#ff3b30'];
+  if (OPS.alarm > 0) return ['ALERT ' + OPS.alarm.toFixed(2), '#ff3b30'];   // ticks down fast, Metal Gear style
+  if (dummies.some(d => d.guard && d.alive && d.guard.state === 'search')) return ['EVASION', '#ff8a3b'];
   let sus = 0, hostile = false, radio = false;
   for (const d of dummies) if (d.guard && d.alive) { sus = Math.max(sus, d.guard.sus); hostile ||= d.guard.hostile; radio ||= d.guard.radioT > 0; }
   if (radio) return ['RADIOING IN', '#ff8a3b'];
@@ -2732,6 +2733,7 @@ const DIFF = [
   { name: 'OPERATIVE', see: 1, aim: 1, react: 0.75, hp: 75 },
   { name: 'ELITE', see: 1.5, aim: 1.4, react: 0.45, hp: 90 },
 ];
+const ALERT_TIME = 15;   // seconds of alert after the last time anyone sees you
 const OPS = { alarm: 0, alarms: 0, seen: 0, time: 0, done: false, started: false, kills: 0, intel: [], targets: [], group: null, exfilOn: false, endT: 0, moveSpd: 0, stepT: 0, lastHead: new V3() };
 const SKINS = [0xdcb58f, 0xc69c72, 0x8d5e3c, 0xe8c4a0, 0x6b4428, 0xb08060];
 const pick = a => a[Math.floor(Math.random() * a.length)];
@@ -2904,7 +2906,7 @@ function engage(d, head) {
 }
 function raiseAlarm() {
   if (OPS.alarm <= 0) { OPS.alarms++; banner('ALARM', 'The facility is on alert', 2.5); sfx.alarm(true); setMusic(true); }
-  OPS.alarm = 50;
+  OPS.alarm = ALERT_TIME;
   const head = headPos();
   for (const d of dummies) {
     const g = d.guard;
@@ -2999,7 +3001,7 @@ function updateGuards(sdt) {
       g.sus = Math.min(1, g.sus + rate * sdt);
       if (g.sus > 0.3 && !g.hostile) { g.last.copy(head); if (g.state === 'patrol') setState(d, 'investigate'); }
       if (g.sus >= 1) engage(d, head);
-      if (g.hostile) { g.last.copy(head); g.seenT = OPS.time; if (OPS.alarm > 0) OPS.alarm = 50; }
+      if (g.hostile) { g.last.copy(head); g.seenT = OPS.time; if (OPS.alarm > 0) OPS.alarm = ALERT_TIME; }
     } else if (!g.hostile) g.sus = Math.max(0, g.sus - sdt * (g.state === 'patrol' ? 0.15 : 0.05));
 
     // bodies: a fallen comrade means trouble
