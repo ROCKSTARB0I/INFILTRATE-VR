@@ -1,10 +1,10 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=1';
-import { Dummy, faceTex } from './ragdoll.js?v=1';
-import { Gore } from './gore.js?v=1';
-import { sfx, music } from './audio.js?v=1';
-import { buildFacility, findPath, walkable, ROOMS, EXFIL, START, HALF as FHALF } from './facility.js?v=1';
-import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=1';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=2';
+import { Dummy, faceTex } from './ragdoll.js?v=2';
+import { Gore } from './gore.js?v=2';
+import { sfx, music } from './audio.js?v=2';
+import { buildFacility, findPath, walkable, ROOMS, EXFIL, START, HALF as FHALF } from './facility.js?v=2';
+import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=2';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -204,7 +204,7 @@ function fullReset() {
   startMission();
   P.hp = 100; P.dead = false; CR.on = false;
   rig.position.set(START.x, S.height + P.y, START.z); pitch = 0;
-  if (inVR) { rig.rotation.y = START.yaw; yaw = 0; } else { rig.rotation.y = 0; yaw = START.yaw; }
+  if (inVR) { rig.rotation.y = START.yaw; yaw = 0; } else { rig.rotation.y = 0; yaw = START.yaw; camera.rotation.set(pitch, yaw, 0); }
   // all you bring: a suppressed pistol and a knife
   const pistol = makeTool('spistol', START.x, 1, START.z), knife = makeTool('knife', START.x, 1, START.z);
   holsters[0].tool = knife; knife.holster = holsters[0];
@@ -1570,7 +1570,8 @@ function updateHand(h, dt) {
         t.mesh.userData.barrels.rotation.z += t.spin * dt * 45;
         if (t.spin < 0.95) { h.wasTrigger = h.trigger; placeGlove(h); return; }
       }
-      const want = t.def.auto ? h.trigger : (h.trigger && !h.wasTrigger);
+      const want = t.def.auto ? h.trigger || h.pressed : (h.trigger && !h.wasTrigger) || h.pressed;
+      h.pressed = false;
       if (!h.ctrl) updateDeskReload(t, dt);
       if (t.slideT > 0) t.slideT -= dt;
       if (want && t.cool <= 0 && !(t.reloadT > 0)) {
@@ -2331,11 +2332,13 @@ function placeMenu() {
   UI.mesh.lookAt(head.x, UI.mesh.position.y, head.z);
 }
 function openMenu() {
+  if (!inVR) $('pausedNote').hidden = false;
   paused = true; UI.mesh.visible = true; UI.hover = -1; UI.help = -1; UI.shop = false; UI.cheat = false; UI.gore = false;
   for (const h of [...vrHands, desk]) h.trigger = false;
   rig.updateMatrixWorld(true); placeMenu(); drawMainMenu();
 }
 function closeMenu() {
+  $('pausedNote').hidden = true;
   paused = false; played = true; UI.mesh.visible = false;
   for (const d of UI.dots) d.visible = false;
   hudKey = '';
@@ -3196,6 +3199,7 @@ function clampRig() {
   if (p.z > lim) rig.position.z -= p.z - lim; else if (p.z < -lim) rig.position.z -= p.z + lim;
 }
 function desktopMove(dt) {
+  if (paused && !freecam) { camera.rotation.set(pitch, yaw, 0); return; }
   const look = 1.8 * dt;
   if (keys.ArrowLeft) yaw += look; if (keys.ArrowRight) yaw -= look;
   if (keys.ArrowUp) pitch += look; if (keys.ArrowDown) pitch -= look;
@@ -3293,7 +3297,7 @@ canvas.addEventListener('mousedown', e => {
   if (paused) { mouseN.x = e.clientX / innerWidth * 2 - 1; mouseN.y = 1 - e.clientY / innerHeight * 2; menuClick(); return; }
   dragging = true;
   if (!locked && !noLock) { try { canvas.requestPointerLock()?.catch?.(() => { noLock = true; }); } catch { noLock = true; } }
-  desk.trigger = true;
+  desk.trigger = true; desk.pressed = true;   // remembered till the next frame, so a quick click still fires
   const tool = desk.held?.type === 'tool' ? desk.held.tool : null;
   if (tool?.def.saw) return;   // the saw just runs while the button is held
   if (tool?.embed) { yankOut(desk, tool); return; }
@@ -3320,13 +3324,14 @@ document.addEventListener('pointerlockchange', () => { locked = document.pointer
 document.addEventListener('pointerlockerror', () => { noLock = true; });
 
 // ------------------------------------------------------------ start / VR session
-function begin() {
+function begin(vr = false) {
   if (started) return;
   started = true;
   sfx.init();
   $('screen').hidden = true;
   setMap(S.map, true);
-  openMenu();
+  if (vr) openMenu();
+  else { closeMenu(); setMusic(false); banner('INFILTRATE', 'Kill 2 targets · steal 2 intel · get out', 4); }
 }
 // ------------------------------------------------------------ multiplayer lobby + messages
 net.getMap = () => S.map;
@@ -3382,7 +3387,7 @@ $('playDesktop').addEventListener('click', () => { begin(); $('hud').hidden = fa
 $('enterVR').addEventListener('click', async () => {
   try {
     const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] });
-    begin();
+    begin(true);
     session.addEventListener('end', () => {
       inVR = false; drop(vrHands[0]); drop(vrHands[1]);
       for (const h of vrHands) h.glove.visible = false;
@@ -3393,7 +3398,9 @@ $('enterVR').addEventListener('click', async () => {
     drop(desk); inVR = true; freecam = false; desk.glove.visible = false;
     for (const h of vrHands) h.glove.visible = false;
     $('hud').hidden = true;
-    rig.position.set(0, S.height, 1.5); rig.rotation.y = 0;
+    camera.position.set(0, 0, 0); camera.rotation.set(0, 0, 0);
+    fullReset();   // outside by the van, pistol and knife in the hip holsters
+    openMenu();
     UI.follow = 30;   // keep the menu in front until the headset pose arrives
     camera.position.set(0, 0, 0); camera.rotation.set(0, 0, 0);
   } catch (err) {
