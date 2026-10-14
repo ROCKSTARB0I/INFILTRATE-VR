@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>INFILTRATE</title>
+<meta name="description" content="A tactical stealth infiltration game for Meta Quest. Silenced weapons, real reloads, guards that hunt you.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="INFILTRATE">
+<meta property="og:description" content="Tactical stealth infiltration for Meta Quest.">
+<link rel="icon" href="icon-512.png" sizes="512x512" type="image/png">
+<link rel="icon" href="icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b0d10">
+<link rel="stylesheet" href="style.css?v=1">
+</head>
+<body>
+<canvas id="view" tabindex="0"></canvas>
+
+<div id="hud" hidden>
+  <div id="crosshair"></div>
+  <div id="kills" hidden>KILLS 0</div>
+  <div id="free" hidden>FREECAM</div>
+  <div id="spawnHud" hidden></div>
+  <div id="hp"><div id="hpFill"></div><span id="hpText">100</span></div>
+  <div id="status">HIDDEN</div>
+  <div id="waveInfo" hidden></div>
+  <div id="obj"></div>
+  <div id="ammo"></div>
+  <div id="help">
+    <b>WASD</b> move · <b>Shift</b> run · <b>C</b> crouch · <b>Mouse</b> look · <b>Click</b> shoot · <b>E</b> grab / drop · <b>R</b> reload · <b>1</b> pistol <b>2</b> knife <b>3</b> long gun · <b>B</b> holster · <b>O</b> objectives · <b>M</b> menu
+  </div>
+</div>
+
+<div id="screen">
+  <h1>INFILTRATE</h1>
+  <p class="tag">GET IN. DO THE JOB. GET OUT.</p>
+  <p>Slip into a black site, take out two targets, steal their intel and walk out before anyone raises the alarm. Suppressed weapons, real reloads, and guards who notice things.</p>
+  <div class="row">
+    <button id="enterVR">Enter VR</button>
+    <button id="playDesktop">Play on desktop</button>
+  </div>
+  <p id="vrNote"></p>
+  <div id="mp" hidden>
+    <input id="mpName"><input id="mpCode"><button id="mpHost"></button><button id="mpJoin"></button>
+    <div id="mpCodeBig" hidden></div><p id="mpStatus"></p>
+  </div>
+  <p class="small">
+    <b>Quest:</b> left stick walk · right stick turn / crouch · grip grab · trigger shoot<br>
+    <b>Reload:</b> A / X drops the mag · grip at your chest for a new one · push it in · B / Y racks the slide<br>
+    Crouch for real or push the right stick down · click a stick for the menu and full briefing
+  </p>
+</div>
+
+<script type="module" src="src/main.js?v=1"></script>
+</body>
+</html>

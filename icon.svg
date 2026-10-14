@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#0b0d10"/>
+  <circle cx="256" cy="230" r="150" fill="none" stroke="#c8d64a" stroke-width="14"/>
+  <circle cx="256" cy="230" r="70" fill="none" stroke="#c8d64a" stroke-width="6" opacity=".6"/>
+  <rect x="249" y="50" width="14" height="110" fill="#c8d64a"/>
+  <rect x="249" y="300" width="14" height="110" fill="#c8d64a"/>
+  <rect x="76" y="223" width="110" height="14" fill="#c8d64a"/>
+  <rect x="326" y="223" width="110" height="14" fill="#c8d64a"/>
+  <circle cx="256" cy="230" r="9" fill="#ff3b30"/>
+  <text x="256" y="470" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-weight="bold" font-size="54" letter-spacing="10" fill="#e6e9ed">INFILTRATE</text>
+</svg>
