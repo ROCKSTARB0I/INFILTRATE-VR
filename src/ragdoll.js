@@ -2,7 +2,7 @@
 // walking pose while alive ("active ragdoll"), goes limp when dead, and can
 // lose its head and limbs.
 import * as THREE from '../vendor/three.module.js';
-import { Particle, HALF, segSeg } from './physics.js?v=3';
+import { Particle, HALF, segSeg } from './physics.js?v=4';
 
 // rest pose, facing +Z
 const REST = {
@@ -468,6 +468,10 @@ export class Dummy {
       const peak = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.012, 0.07), dark); peak.position.set(0, 0.075, 0.12); peak.rotation.x = 0.2; H.add(peak);
       const badge = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.01), mat(0xc9a227)); badge.position.set(0, 0.1, 0.132); H.add(badge);
     }
+    if (G.beanie) {   // knit cap
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.122, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.42), mat(G.beanie)); cap.position.y = 0.02; H.add(cap);
+      const fold = new THREE.Mesh(new THREE.CylinderGeometry(0.118, 0.12, 0.035, 14), mat(G.beanie)); fold.position.y = 0.035; H.add(fold);
+    }
     if (G.glasses) {
       for (const sx of [-1, 1]) { const l = new THREE.Mesh(new THREE.TorusGeometry(0.022, 0.004, 4, 12), dark); l.position.set(sx * 0.04, 0.015, 0.108); H.add(l); }
     }
@@ -479,7 +483,7 @@ export class Dummy {
       const pack = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.3, 0.08), strap); pack.position.set(0, 0.05, -0.17); T.add(pack);
     }
     if (G.coat) {   // lab coat: long white skirt below the torso
-      const coat = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.22, 0.42, 12, 1, true), mat(0xeef0f2)); coat.position.y = -0.36; coat.material.side = THREE.DoubleSide; T.add(coat);
+      const coat = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.22, 0.42, 12, 1, true), mat(G.coat === true ? 0xeef0f2 : G.coat)); coat.position.y = -0.36; coat.material.side = THREE.DoubleSide; T.add(coat);
     }
     const belt = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.05, 0.24), strap); belt.position.y = -0.2; T.add(belt);
     // gloves on the hands, boots on the feet

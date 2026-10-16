@@ -1,10 +1,11 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=3';
-import { Dummy, faceTex } from './ragdoll.js?v=3';
-import { Gore } from './gore.js?v=3';
-import { sfx, music } from './audio.js?v=3';
-import { buildFacility, findPath, walkable, ROOMS, EXFIL, START, HALF as FHALF } from './facility.js?v=3';
-import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=3';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=4';
+import { Dummy, faceTex } from './ragdoll.js?v=4';
+import { Gore } from './gore.js?v=4';
+import { sfx, music } from './audio.js?v=4';
+import { buildLevel, findPath, walkable, ROOMS, EXFIL, START, SKY } from './facility.js?v=4';
+import { LEVELS, GUARD_LOOKS } from './levels.js?v=4';
+import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=4';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -90,10 +91,12 @@ function addSky(g, night) {
     sunBall.position.set(40, 70, 30); g.add(sunBall);
   }
 }
-const MAPS = {
-  facility: { name: 'Black site', half: FHALF, verb: { secs: 1.1, wet: 0.28, damp: 0.6 }, bg: 0x0b0d10, hemi: [0xc4d0e4, 0x2a2622, 1.35], sun: [0xaab8d0, 0.45], wallH: WALL_H, fog: [0x0b0d10, 16, 42],
-    build(g, boxes) { buildFacility(g, boxes); } },
-};
+// one map per mission, built from its level file
+const MAPS = Object.fromEntries(LEVELS.map(L => [L.key, {
+  name: L.name, half: L.half, verb: { secs: 1.1, wet: 0.28, damp: 0.6 }, bg: L.look.bg, hemi: L.look.hemi, sun: L.look.sun, wallH: WALL_H, fog: L.look.fog,
+  build(g, boxes) { buildLevel(g, boxes, L); },
+}]));
+const LEVEL = () => LEVELS.find(L => L.key === S.map) ?? LEVELS[0];
 const MAP_KEYS = Object.keys(MAPS);
 let mapGroup = null;
 
@@ -170,7 +173,7 @@ const selfNeck = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.06, 1, 14), 
 selfNeck.layers.set(MIRROR_ONLY); scene.add(selfNeck);
 camera.layers.enable(EYES_ONLY);
 function setMap(key, fromNet = false) {
-  if (!MAPS[key]) key = 'facility';
+  if (!MAPS[key]) key = LEVELS[0].key;
   // in a multiplayer game the host picks the map for everyone
   if (net.on && !net.host && !fromNet) { if (started) banner('HOST PICKS', 'Only the host can change the map', 2); return; }
   if (net.on && net.host) send({ t: 'map', map: key });
@@ -225,18 +228,24 @@ const gore = new Gore(scene, world);
 // weapon table, to the player's left
 const TABLE = { min: new V3(-2.45, 0.84, -3.55), max: new V3(-1.35, 0.9, 0.8) };
 world.boxes.push(TABLE);
+const tableMesh = new THREE.Group(); scene.add(tableMesh);
 {
   const mat = new THREE.MeshLambertMaterial({ color: 0x4a5059 });
   const top = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.06, 4.35), mat);
-  top.position.set(-1.9, 0.87, -1.375); scene.add(top);
-  for (const x of [-2.4, -1.4]) for (const z of [-3.5, -1.375, 0.75]) {
+  top.position.set(0, 0.87, 0); tableMesh.add(top);
+  for (const x of [-0.5, 0.5]) for (const z of [-2.125, 0, 2.125]) {
     const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.84, 0.05), mat);
-    leg.position.set(x, 0.42, z); scene.add(leg);
+    leg.position.set(x, 0.42, z); tableMesh.add(leg);
   }
 }
+// the armory table moves to wherever this level keeps its spare guns
+function placeTable(x, z) {
+  tableMesh.position.set(x, 0, z);
+  TABLE.min.set(x - 0.55, 0.84, z - 2.175); TABLE.max.set(x + 0.55, 0.9, z + 2.175);
+}
 
-const S = { kills: +(localStorage.getItem('infiltrateKills') || 0) || 0, hostile: false, slowmo: false, lowG: false, god: false, map: 'facility', track: 2, height: 0, diff: 1 };
-try { const o = JSON.parse(localStorage.getItem('infiltrateSettings') || '{}'); for (const k of ['track', 'height', 'diff']) if (k in o) S[k] = o[k]; if ('vol' in o) music.setVolume(o.vol); } catch { /* defaults */ }
+const S = { kills: +(localStorage.getItem('infiltrateKills') || 0) || 0, hostile: false, slowmo: false, lowG: false, god: false, map: LEVELS[0].key, track: 2, height: 0, diff: 1 };
+try { const o = JSON.parse(localStorage.getItem('infiltrateSettings') || '{}'); for (const k of ['map', 'track', 'height', 'diff']) if (k in o) S[k] = o[k]; if ('vol' in o) music.setVolume(o.vol); } catch { /* defaults */ }
 function saveSettings() { try { localStorage.setItem('infiltrateSettings', JSON.stringify({ map: S.map, track: S.track, height: S.height, diff: S.diff, vol: music.volume })); } catch { /* ignore */ } }
 function setTrack(i) { S.track = i; music.play(i); saveSettings(); drawMenu(); drawMainMenu(); }
 function setVolume(v) { music.setVolume(v); saveSettings(); drawMenu(); drawMainMenu(); }
@@ -703,11 +712,12 @@ function removeTool(t) {
 }
 function resetItems() {
   for (const t of [...tools]) removeTool(t);
-  DEFAULT_TOOLS.forEach((k, i) => makeTool(k, -1.9, 0.96, 0.3 - i * 0.55));
+  const A = LEVEL().armory; placeTable(A.x, A.z);
+  DEFAULT_TOOLS.forEach((k, i) => makeTool(k, A.x, 0.96, A.z + 1.7 - i * 0.55));
   for (const b of balls) { releaseBody(b); world.removeBody(b); scene.remove(b.mesh); }
   balls.length = 0;
   for (const g of [...grenades]) removeGrenade(g);
-  for (const x of [-2.1, -1.7]) spawnGrenade(x, 0.97, -3.2);
+  for (const dx of [-0.2, 0.2]) spawnGrenade(A.x + dx, 0.97, A.z - 1.8);
 }
 
 // ------------------------------------------------------------ spawn gun menu
@@ -2175,9 +2185,19 @@ UI.mesh = new THREE.Mesh(new THREE.PlaneGeometry(UI.w, UI.h), new THREE.MeshBasi
 UI.mesh.visible = false; scene.add(UI.mesh);
 UI.dots = [0, 1].map(() => { const d = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff })); d.visible = false; scene.add(d); return d; });
 // sel: true = the left half steps back, the right half steps forward
+const lvlIndex = () => Math.max(0, LEVELS.indexOf(LEVEL()));
+// start whichever mission is picked, from the top
+function playLevel(key) {
+  if (key !== S.map) setMap(key); else fullReset();
+  closeMenu(); missionBanner();
+}
+function missionBanner() { const L = LEVEL(); setMusic(false); banner(L.name, L.op, 4); }
 const UI_ROWS = [
-  { label: () => OPS.done ? 'PLAY AGAIN' : played ? 'RESUME MISSION' : 'START MISSION', act: () => { if (OPS.done) fullReset(); const first = !played; closeMenu(); if (first || OPS.time < 0.5) { setMusic(false); banner('INFILTRATE', 'Kill 2 targets · steal 2 intel · get out', 4); } } },
-  { label: () => 'RESTART MISSION', act: () => { fullReset(); closeMenu(); banner('INFILTRATE', 'Kill 2 targets · steal 2 intel · get out', 4); } },
+  { label: () => OPS.done ? (lvlIndex() < LEVELS.length - 1 ? 'NEXT MISSION: ' + LEVELS[lvlIndex() + 1].name : 'PLAY AGAIN') : played ? 'RESUME MISSION' : 'START MISSION',
+    act: () => { if (OPS.done) playLevel(LEVELS[Math.min(LEVELS.length - 1, lvlIndex() + 1)].key); else { const first = !played; closeMenu(); if (first || OPS.time < 0.5) missionBanner(); } } },
+  { sel: true, label: () => 'MISSION ' + (lvlIndex() + 1) + ':  ' + LEVEL().name + (BEST[LEVEL().key] ? '  · ' + BEST[LEVEL().key] : ''),
+    act: d => playLevel(LEVELS[(lvlIndex() + d + LEVELS.length) % LEVELS.length].key) },
+  { label: () => 'RESTART MISSION', act: () => playLevel(S.map) },
   { sel: true, label: () => 'DIFFICULTY:  ' + DIFF[S.diff].name + (played ? '  (restarts)' : ''), act: d => { S.diff = (S.diff + d + DIFF.length) % DIFF.length; saveSettings(); if (played) fullReset(); } },
   { sel: true, label: () => 'MUSIC:  ' + trackName(), act: d => setTrack((S.track + 1 + d + music.tracks.length + 1) % (music.tracks.length + 1) - 1) },
   { sel: true, label: () => 'MUSIC VOLUME:  ' + Math.round(music.volume * 100) + '%', act: d => setVolume(music.volume + d * 0.1) },
@@ -2186,7 +2206,6 @@ const UI_ROWS = [
   { label: () => 'GORE:  ' + goreName(), act: () => { UI.gore = true; } },
   { label: () => 'GLOVES', act: () => { UI.shop = true; } },
   { label: () => OPS.result ? 'LAST RUN: ' + OPS.result : 'Stay quiet. Leave no one to raise the alarm.', act: () => {} },
-  null,
 ];
 // ---- gore level: four presets, or tune each part by hand (that makes it Custom)
 const GORE_PRESETS = {
@@ -2733,48 +2752,16 @@ const DIFF = [
   { name: 'OPERATIVE', see: 1, aim: 1, react: 0.75, hp: 75 },
   { name: 'ELITE', see: 1.5, aim: 1.4, react: 0.45, hp: 90 },
 ];
+let BEST = {};   // best rating per mission
+try { BEST = JSON.parse(localStorage.getItem('infiltrateBest') || '{}'); } catch { /* none yet */ }
 const ALERT_TIME = 15;   // seconds of alert after the last time anyone sees you
 const OPS = { alarm: 0, alarms: 0, seen: 0, time: 0, done: false, started: false, kills: 0, intel: [], targets: [], group: null, exfilOn: false, endT: 0, moveSpd: 0, stepT: 0, lastHead: new V3() };
 const SKINS = [0xdcb58f, 0xc69c72, 0x8d5e3c, 0xe8c4a0, 0x6b4428, 0xb08060];
 const pick = a => a[Math.floor(Math.random() * a.length)];
-// [path, opts]. Paths are world x, z; look = facing at a post (yaw 0 faces +z / south)
-const GUARDS = [
-  [[[-18, -7.5], [-3, -7.5]], { wait: 3 }],
-  [[[18, -7.5], [3, -7.5]], { wait: 3 }],
-  [[[-5.3, -11], [5.3, -11], [5.3, -19.2], [-5.3, -19.2]], { wait: 1.5 }],
-  [[[2.6, -18.8]], { look: 0 }],
-  [[[-17, -13], [-10, -13], [-10, -18.5]], { wait: 2.5 }],
-  [[[9, -11.5], [18.5, -11.5], [18.5, -13.5], [12.5, -17.5], [8, -17.5]], { wait: 2 }],
-  [[[13, -12.6]], { look: 0 }],
-  [[[-18.5, -1], [-5.8, -2], [-5.8, 2], [-18.5, 1.5]], { wait: 2 }],
-  [[[-15, 1.2]], { sleep: true }],
-  [[[7.2, -4.3], [19.3, -4.3], [19.3, 4.3], [11, 4.3]], { wait: 2 }],
-  [[[-18, 7.5], [18, 7.5]], { wait: 3 }],
-  [[[-18, 11.5], [18, 11.5], [18, 20], [-18, 20]], { wait: 2 }],
-  [[[2.6, 18.6]], { look: Math.PI }],
-  [[[-8, 18], [0, 12], [10, 19.5]], { wait: 3 }],
-  // outside: two on the perimeter, one on the vehicle gate, one on the loading door
-  [[[-29, -29], [29, -29], [29, 29], [-20, 29], [-29, 18]], { wait: 2 }],
-  [[[29, 29], [29, -29], [-29, -29], [-29, -12]], { wait: 2 }],
-  [[[-8, 24]], { look: 0 }],
-  [[[23.8, 2.5]], { look: Math.PI / 2 }],
-  // armory
-  [[[3, 3.5], [3, -3.5]], { wait: 4 }],
-];
-const TARGETS = [
-  { name: 'COL. VARGA', path: [[-13.5, -18.6], [-16, -18.6], [-11, -15]], wait: 4,
-    o: { hp: 100, shirt: 0x2f3a2a, pants: 0x2f3a2a, sleeves: true, skin: 0xd9b28c, hair: 0x8a8a86, gear: { cap: 0x2f3a2a, gloves: false }, pistol: true } },
-  { name: 'DR. HALE', path: [[10, -16.6], [16, -16.6], [13, -13.5]], wait: 5, civ: true,
-    o: { hp: 70, shirt: 0xd8dde3, pants: 0x3a3f4a, sleeves: true, skin: 0xe8c4a0, hair: 0x4a3020, gear: { coat: true, glasses: true, gloves: false } } },
-];
-const INTEL = [
-  { name: 'Server drive', pos: [0, 0.86, -19], kind: 'drive' },
-  { name: 'Prototype case', pos: [16, 0.96, -15], kind: 'case' },
-];
-
 // a soldier, officer or scientist driven by the guard brain below
 function spawnGuard(path, opt, o = null) {
-  const base = { type: 'guard', hp: DIFF[S.diff].hp, speed: 1, shirt: pick([0x4f5640, 0x535a45, 0x48503c]), pants: 0x3f4434, sleeves: true, skin: pick(SKINS), hair: null, gear: { helmet: true, vest: true, kit: pick([0x3f4636, 0x4a4d3a, 0x3a4034]) } };
+  const GL = GUARD_LOOKS[LEVEL().guardLook] ?? GUARD_LOOKS.soldier;
+  const base = { type: 'guard', hp: DIFF[S.diff].hp, speed: 1, shirt: pick(GL.shirts), pants: GL.pants, sleeves: GL.sleeves, skin: pick(SKINS), hair: GL.hair(), gear: GL.gear(pick(GL.kits)) };
   const d = spawnDummy(path[0][0], path[0][1], { ...base, ...o });
   d.mute = true; d.noPickup = true;
   if (!opt.civ) {
@@ -2809,6 +2796,13 @@ function intelMesh(kind) {
   if (kind === 'drive') {
     box(g, M.black, 0.16, 0.035, 0.11, 0, 0.018, 0); box(g, M.dark, 0.14, 0.006, 0.09, 0, 0.038, 0);
     const led = new THREE.Mesh(new THREE.SphereGeometry(0.006, 6, 4), new THREE.MeshBasicMaterial({ color: 0x38e07b })); led.position.set(0.06, 0.02, 0.056); g.add(led);
+  } else if (kind === 'docs') {   // a folder of papers
+    box(g, M.tan, 0.24, 0.025, 0.32, 0, 0.012, 0); box(g, M.white, 0.22, 0.01, 0.3, 0.008, 0.03, 0.004); box(g, M.red, 0.06, 0.012, 0.02, 0, 0.032, -0.12);
+  } else if (kind === 'laptop') {
+    box(g, M.dark, 0.34, 0.02, 0.24, 0, 0.01, 0);
+    const lid = new THREE.Group(); lid.position.set(0, 0.02, -0.12); lid.rotation.x = -1.9; g.add(lid);
+    box(lid, M.dark, 0.34, 0.012, 0.24, 0, 0, -0.12);
+    const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.2), new THREE.MeshBasicMaterial({ color: 0x38e07b })); scr.rotation.x = Math.PI / 2; scr.position.set(0, -0.008, -0.12); lid.add(scr);
   } else {
     box(g, M.steel, 0.46, 0.34, 0.1, 0, 0.17, 0); box(g, M.black, 0.12, 0.03, 0.03, 0, 0.355, 0);
     for (const x of [-0.15, 0.15]) box(g, M.brass, 0.03, 0.02, 0.105, x, 0.3, 0);
@@ -2822,13 +2816,15 @@ function startMission() {
   Object.assign(OPS, { alarm: 0, alarms: 0, seen: 0, time: 0, done: false, kills: 0, exfilOn: false, endT: 0, intel: [], targets: [] });
   Object.assign(AMMO, AMMO_START);
   sfx.alarm(false);
-  for (const [path, opt] of GUARDS) spawnGuard(path, opt);
-  for (const T of TARGETS) {
+  const L = LEVEL();
+  HELP[0] = [L.op, [...L.story, 'Red diamonds: targets. Yellow: intel. Green: exfil.', 'You bring a suppressed pistol and a knife.']];
+  for (const [path, opt] of L.guards) spawnGuard(path, opt);
+  for (const T of L.targets) {
     const d = spawnGuard(T.path, { wait: T.wait, civ: T.civ, pistol: T.o.pistol, name: T.name }, T.o);
     d.speed = 0.85;
     OPS.targets.push({ d, name: T.name, done: false, mark: marker(0xff3b30) });
   }
-  for (const I of INTEL) {
+  for (const I of L.intel) {
     const m = intelMesh(I.kind); m.position.fromArray(I.pos); OPS.group.add(m);
     OPS.intel.push({ ...I, mesh: m, got: false, mark: marker(0xffd23f) });
   }
@@ -2842,7 +2838,7 @@ function startMission() {
 const objectiveLines = () => [
   ...OPS.targets.map(t => [t.done, 'Eliminate ' + t.name]),
   ...OPS.intel.map(i => [i.got, 'Steal the ' + i.name.toLowerCase()]),
-  [OPS.done, OPS.exfilOn ? 'Get back to the van' : 'Exfil at the van (when done)'],
+  [OPS.done, OPS.exfilOn ? LEVEL().exfilText : 'Exfil (when the rest is done)'],
 ];
 function drawObjectives() {
   $('obj').innerHTML = '<b>OBJECTIVES</b><br>' + objectiveLines().map(([ok, txt]) => (ok ? '<s>' : '') + (ok ? '✔ ' : '▢ ') + txt + (ok ? '</s>' : '')).join('<br>');
@@ -3134,7 +3130,7 @@ function updateObjectives(head) {
   }
   if (!OPS.exfilOn && OPS.targets.every(t => t.done) && OPS.intel.every(i => i.got)) {
     OPS.exfilOn = true; changed = true; OPS.exfilMark.visible = true; OPS.exfilRing.visible = true;
-    banner('GET OUT', 'Back to the van where you came in', 3);
+    banner('GET OUT', LEVEL().exfilText, 3);
   }
   if (OPS.exfilOn && !OPS.done) {
     placeMarker(OPS.exfilMark, tv.set(EXFIL.x, 2.6, EXFIL.z), head);
@@ -3154,6 +3150,8 @@ function missionComplete() {
   const rating = OPS.alarms === 0 && OPS.seen === 0 ? 'GHOST' : OPS.alarms === 0 ? 'SILENT' : 'LOUD';
   const m = Math.floor(OPS.time / 60), s = Math.floor(OPS.time % 60);
   OPS.result = `${rating} · ${m}:${String(s).padStart(2, '0')} · ${OPS.kills} down · seen ${OPS.seen}x`;
+  const rank = { LOUD: 1, SILENT: 2, GHOST: 3 }, key = LEVEL().key;
+  if (!BEST[key] || rank[rating] > rank[BEST[key]]) { BEST[key] = rating; try { localStorage.setItem('infiltrateBest', JSON.stringify(BEST)); } catch { /* private mode */ } }
   banner('MISSION COMPLETE', OPS.result, 7);
   OPS.endT = 7.5; drawObjectives();
 }
@@ -3333,7 +3331,7 @@ function begin(vr = false) {
   $('screen').hidden = true;
   setMap(S.map, true);
   if (vr) openMenu();
-  else { closeMenu(); setMusic(false); banner('INFILTRATE', 'Kill 2 targets · steal 2 intel · get out', 4); }
+  else { closeMenu(); missionBanner(); }
 }
 // ------------------------------------------------------------ multiplayer lobby + messages
 net.getMap = () => S.map;
@@ -3497,6 +3495,7 @@ function frame(time) {
       updatePlayer(dt);
     }
     gore.sync(time);
+    if (SKY) { SKY.position.copy(headPos()); SKY.position.y = 0; }
     for (const tr of tracers) if (tr.m.visible) { tr.t -= dt; tr.m.material.opacity = Math.max(0, tr.t / 0.07); if (tr.t <= 0) tr.m.visible = false; }
     for (let i = explosions.length - 1; i >= 0; i--) {
       const e = explosions[i]; e.t += dt;
