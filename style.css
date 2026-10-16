@@ -53,3 +53,7 @@ button:disabled{opacity:.35;cursor:default}
 #ammo{position:absolute;right:20px;bottom:44px;font-weight:bold;font-size:26px;letter-spacing:.06em;text-shadow:0 1px 4px #000}
 #hp{top:12px}
 #pausedNote{position:absolute;left:50%;bottom:90px;transform:translateX(-50%);padding:8px 16px;border-radius:4px;background:rgba(10,12,14,.85);color:#c8d64a;font-weight:bold;letter-spacing:.1em}
+#gadget{position:absolute;right:20px;bottom:78px;font-weight:bold;font-size:14px;letter-spacing:.08em;color:#35e0ff;text-shadow:0 1px 3px #000}
+#droneHud{position:absolute;inset:0;border:3px solid rgba(53,224,255,.5);box-shadow:inset 0 0 120px rgba(0,30,40,.8)}
+#droneHud span{position:absolute;left:50%;top:44px;transform:translateX(-50%);color:#35e0ff;font-weight:bold;letter-spacing:.12em;font-size:13px;text-shadow:0 1px 3px #000;white-space:nowrap}
+#droneHud .dcross{position:absolute;left:50%;top:50%;width:60px;height:60px;margin:-30px 0 0 -30px;border:2px solid rgba(53,224,255,.8);border-radius:50%}
