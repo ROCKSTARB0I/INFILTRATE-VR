@@ -51,6 +51,10 @@ export const LEVELS = [
       ...bushes([[-20, 30], [-8, 31], [4, 30.5], [18, 31], [30, 22], [31, 8], [30.5, -8], [31, -26], [18, -31], [-2, -31], [-25, -30], [-31, -20], [-30.5, 2], [-31, 12]]),
       [-12, 15, 2.4, 5.5, 2.5, 'truck'], [-4, 14.5, 2.2, 4.4, 1.6, 'jeep'], [7, 15, 2.4, 5.5, 2.5, 'truck'], [14, 18.5, 1.2, 1, 1.1, 'crate'], [-17, 19, 2, 2, 1.2, 'crate'],
     ],
+    // drywall you can shoot through and blow open
+    soft: [[-7, -19, -6, -16], [6, -19, 7, -16], [-5, -10, -2, -9], [3, -10, 6, -9], [-5, -3, -4, 0], [5, 1, 6, 4], [-19, -10, -16, -9], [-6, 9, -2, 10], [-22, 2, -20, 4]],
+    // security cameras: [x, y, z, yaw it faces, how far it sweeps either side]
+    cams: [[-19.6, 2.9, -7.5, P2, 0.6], [19.6, 2.9, -7.5, -P2, 0.6], [0, 2.9, 20.6, Math.PI, 0.8], [-8, 2.9, 22.45, 0, 0.7], [19.5, 2.9, -19.5, -3 * P4, 0.5]],
     signs: [['COMMAND', -14, -8.98, 0], ['SERVERS', 0, -8.98, 0], ['R&D LAB', 14, -8.98, 0], ['BARRACKS', -13, -6.02, Math.PI], ['STORAGE', 13, -6.02, Math.PI], ['ARMORY', 0, -6.02, Math.PI], ['MOTOR POOL', 3, 8.98, 0]],
     lamps: [[-24, -24], [24, -24], [24, 24], [-24, 24], [-8, 24], [24, 2.5], [-24, 0]],
     start: { x: -26.5, z: 28.5, yaw: -P4 }, exfil: { x: -27.5, z: 27.5, r: 2.2 },
@@ -136,6 +140,8 @@ export const LEVELS = [
       [-4, -3, 1.2, 1.2, 1.2, 'crate'], [14, -2, 1.2, 1.2, 1.2, 'crate'], [30, 0, 1.2, 1.2, 1.2, 'crate'], [-16, -10, 1.2, 1.2, 1.2, 'crate'], [-30, -8, 1.2, 1.2, 1.1, 'metal'],
       [-8, 31, 3, 0.6, 1.0, 'sandbag'], [33, 29, 2.2, 4.8, 2.2, 'van'],
     ],
+    soft: [[11, -18, 12, -15], [0, -22, 3, -21], [18, -9, 19, -6], [25, -9, 26, -6], [26, -11, 28, -10], [-24, -17, -23, -15], [-19, -17, -18, -15]],
+    cams: [[-8.6, 2.9, -20.6, P4, 0.6], [30.6, 2.9, -18.6, -P4, 0.6], [4, 2.9, -22.45, Math.PI, 1.0], [-3, 2.9, 30.45, 0, 0.8], [17.55, 2.9, -10, -P2, 0.7]],
     signs: [['WAREHOUSE A', 0, -5.98, 0], ['HARBOR OFFICE', -26, -12.98, 0], ['WAREHOUSE B', 17.98, -12, -P2], ['GATE', -3, 23.98, Math.PI]],
     lamps: [[-20, -26], [0, -25], [20, -24], [-20, 0], [0, 0], [20, 0], [-3, 22], [32, 20]],
     start: { x: 32.5, z: 33, yaw: P4 }, exfil: { x: 31, z: 32, r: 2.4 },
@@ -217,6 +223,8 @@ export const LEVELS = [
       [-6, 22, 2.2, 4.4, 1.6, 'jeep'], [6, 22, 2.2, 4.4, 1.3, 'car'],
       ...[[-6, 11], [6, 11], [-18, -24], [18, -26], [-28, -14], [28, 0], [-14, 26], [14, 28]].map(([x, z]) => [x, z, 0.5, 0.5, 5, 'palm']),
     ],
+    soft: [[-6, -19, -5, -17], [4, -19, 5, -17], [-4, -10, -3, -8], [3, -10, 4, -8], [-12, -11, -9, -10], [6, -11, 9, -10], [22, 13, 23, 15]],
+    cams: [[0, 2.9, -1.55, 0, 0.9], [-2.6, 2.9, -3.4, 3 * P4, 0.5], [3.6, 2.9, -18.6, -P4, 0.5], [22, 2.9, 16.45, 0, 0.8], [-22, 2.9, 14.45, 0, 0.7]],
     signs: [['SECURITY', 19, 16.02, 0]],
     lamps: [[-12, 0], [12, 0], [0, 26], [-24, 18], [24, 0], [-20, -24], [20, -24]],
     start: { x: -29, z: 29, yaw: -P4 }, exfil: { x: -28.5, z: 28.5, r: 2.2 },
@@ -258,3 +266,13 @@ export const GUARD_LOOKS = {
   cartel: { shirts: [0x1e1e22, 0x7a2a2a, 0xe8e8e8, 0x3a4a6a], pants: 0x2e3b52, sleeves: false, hair: () => [0x1a1a1a, 0x2a1b10, 0x3a2a1a][Math.floor(Math.random() * 3)],
     gear: k => ({ vest: true, kit: k, gloves: false }), kits: [0x2b2b2b, 0x3a3a30] },
 };
+
+// who you go in as: each one brings different gadgets
+export const OPERATORS = [
+  { key: 'spectre', name: 'SPECTRE', role: 'RECON', gadgets: { drone: 2, heartbeat: 1, flash: 1 },
+    blurb: 'Two recon drones to scout and mark guards, and a heartbeat sensor that shows anyone close by through walls.' },
+  { key: 'torch', name: 'TORCH', role: 'BREACHER', gadgets: { breach: 3, flash: 2 }, long: 'ssmg',
+    blurb: 'Breach charges blow open soft walls. Flashbangs blind a room. Brings a suppressed SMG.' },
+  { key: 'wraith', name: 'WRAITH', role: 'INFILTRATOR', gadgets: { drone: 1, flash: 1 }, silent: true, assassin: true,
+    blurb: 'Footsteps make no sound, guards take longer to spot you, and the knife kills from any angle.' },
+];

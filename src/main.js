@@ -1,11 +1,11 @@
 import * as THREE from '../vendor/three.module.js';
-import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=4';
-import { Dummy, faceTex } from './ragdoll.js?v=4';
-import { Gore } from './gore.js?v=4';
-import { sfx, music } from './audio.js?v=4';
-import { buildLevel, findPath, walkable, ROOMS, EXFIL, START, SKY } from './facility.js?v=4';
-import { LEVELS, GUARD_LOOKS } from './levels.js?v=4';
-import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=4';
+import { World, Particle, HALF, setHalf, WALL_H, TICK, segSeg } from './physics.js?v=5';
+import { Dummy, faceTex } from './ragdoll.js?v=5';
+import { Gore } from './gore.js?v=5';
+import { sfx, music } from './audio.js?v=5';
+import { buildLevel, findPath, walkable, breachSoft, ROOMS, EXFIL, START, SKY, SOFT } from './facility.js?v=5';
+import { LEVELS, GUARD_LOOKS, OPERATORS } from './levels.js?v=5';
+import { net, SHIRTS, host as netHost, join as netJoin, send, sendPose, updateVoices, setMuted } from './net.js?v=5';
 
 const V3 = THREE.Vector3;
 const NEG_Z = new V3(0, 0, -1), UP = new V3(0, 1, 0);
@@ -211,6 +211,7 @@ function fullReset() {
   // all you bring: a suppressed pistol and a knife
   const pistol = makeTool('spistol', START.x, 1, START.z), knife = makeTool('knife', START.x, 1, START.z);
   holsters[0].tool = knife; knife.holster = holsters[0];
+  if (OP().long) { const lg = makeTool(OP().long, START.x, 1, START.z); holsters[2].tool = lg; lg.holster = holsters[2]; }
   if (inVR) { holsters[1].tool = pistol; pistol.holster = holsters[1]; }
   else { pistol.held = desk; pistol.a.pinned = pistol.b.pinned = true; desk.held = { type: 'tool', tool: pistol }; desk.hasTip = false; }
 }
@@ -244,9 +245,9 @@ function placeTable(x, z) {
   TABLE.min.set(x - 0.55, 0.84, z - 2.175); TABLE.max.set(x + 0.55, 0.9, z + 2.175);
 }
 
-const S = { kills: +(localStorage.getItem('infiltrateKills') || 0) || 0, hostile: false, slowmo: false, lowG: false, god: false, map: LEVELS[0].key, track: 2, height: 0, diff: 1 };
-try { const o = JSON.parse(localStorage.getItem('infiltrateSettings') || '{}'); for (const k of ['map', 'track', 'height', 'diff']) if (k in o) S[k] = o[k]; if ('vol' in o) music.setVolume(o.vol); } catch { /* defaults */ }
-function saveSettings() { try { localStorage.setItem('infiltrateSettings', JSON.stringify({ map: S.map, track: S.track, height: S.height, diff: S.diff, vol: music.volume })); } catch { /* ignore */ } }
+const S = { kills: +(localStorage.getItem('infiltrateKills') || 0) || 0, hostile: false, slowmo: false, lowG: false, god: false, map: LEVELS[0].key, track: 2, height: 0, diff: 1, op: 0 };
+try { const o = JSON.parse(localStorage.getItem('infiltrateSettings') || '{}'); for (const k of ['map', 'track', 'height', 'diff', 'op']) if (k in o) S[k] = o[k]; if ('vol' in o) music.setVolume(o.vol); } catch { /* defaults */ }
+function saveSettings() { try { localStorage.setItem('infiltrateSettings', JSON.stringify({ map: S.map, track: S.track, height: S.height, diff: S.diff, op: S.op, vol: music.volume })); } catch { /* ignore */ } }
 function setTrack(i) { S.track = i; music.play(i); saveSettings(); drawMenu(); drawMainMenu(); }
 function setVolume(v) { music.setVolume(v); saveSettings(); drawMenu(); drawMainMenu(); }
 function setHeight(v) { S.height = Math.round(Math.max(-0.8, Math.min(0.8, v)) * 100) / 100; saveSettings(); drawMenu(); drawMainMenu(); }
@@ -360,6 +361,8 @@ function explode(barrel) {
 // explosion at c: throws everything within R, tears up dummies, sets off other explosives
 function blast(c, R = 5, rocket = false, enemy = false) {
   sfx.boom(); pulseAll(1, 200);
+  breachNear(c, R * 0.55);
+  opsNoise(c, 30, true);
   const mesh = new THREE.Mesh(blastGeo, new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.9, depthWrite: false }));
   mesh.position.copy(c); scene.add(mesh); explosions.push({ mesh, t: 0, size: R / 5 });
   gore.sparks(c, 40);
@@ -1584,7 +1587,7 @@ function updateHand(h, dt) {
       h.pressed = false;
       if (!h.ctrl) updateDeskReload(t, dt);
       if (t.slideT > 0) t.slideT -= dt;
-      if (want && t.cool <= 0 && !(t.reloadT > 0)) {
+      if (want && t.cool <= 0 && !(t.reloadT > 0) && !DR.active) {
         if (reloadable(t) && !t.chamber) { if (!h.wasTrigger) { sfx.tick(); pulse(h, 0.15, 15); } t.cool = 0.2; }   // click: empty
         else fire(h, t);
       }
@@ -1617,7 +1620,8 @@ function hitscan(o, d) {
   if (d.x > 0) take((HALF - o.x) / d.x, 'wall'); else if (d.x < 0) take((-HALF - o.x) / d.x, 'wall');
   if (d.z > 0) take((HALF - o.z) / d.z, 'wall'); else if (d.z < 0) take((-HALF - o.z) / d.z, 'wall');
   if (d.y > 0) take((WALL_H - o.y) / d.y, 'wall'); else if (d.y < 0) take(-o.y / d.y, 'wall');
-  for (const b of world.boxes) take(rayBox(o, d, b), 'wall');
+  for (const b of world.boxes) take(rayBox(o, d, b), b.soft ? 'soft' : 'wall', b.soft ? { soft: b.soft } : undefined);
+  for (const c of CAMS) if (!c.dead && segSeg(o, rayEnd, c.pos, c.pos) < 0.16 * 0.16) take(segSeg.s * L, 'cam', { cam: c });
   if (d.x > 0) {
     const t = (PANEL.x - 0.02 - o.x) / d.x, i = panelIndex(o.y + d.y * t, o.z + d.z * t);
     if (i !== -1) take(t, 'panel', { index: i });
@@ -1663,8 +1667,15 @@ function fire(h, t) {
     dirV.copy(NEG_Z).applyQuaternion(t.aimQ);
     dirV.x += (Math.random() - 0.5) * 2 * sp; dirV.y += (Math.random() - 0.5) * 2 * sp; dirV.z += (Math.random() - 0.5) * 2 * sp;
     dirV.normalize();
-    let r = hitscan(o, dirV);
+    let r = hitscan(o, dirV), mul = 1;
     hitPt.copy(o).addScaledVector(dirV, r.t);
+    // drywall and sheet metal don't stop a bullet: it carries on, weaker
+    for (let k = 0; k < 2 && r.kind === 'soft'; k++) {
+      gore.sparks(hitPt, 2); mul *= r.soft.metal ? 0.5 : 0.65;
+      const from = tv3.copy(hitPt).addScaledVector(dirV, 0.02);
+      r = hitscan(from, dirV); hitPt.copy(from).addScaledVector(dirV, r.t);
+    }
+    if (r.kind === 'cam') { destroyCam(r.cam, hitPt); continue; }
     tracer(fromV, hitPt);
     if (net.on) ends.push(r3(hitPt.x), r3(hitPt.y), r3(hitPt.z));
     // a sniper round keeps going through the first two bodies
@@ -1697,7 +1708,7 @@ function fire(h, t) {
         if (!c) clusters.set(key, c = { d, bone: r.bone, pt: new V3(), dir: dirV.clone(), n: 0 });
         c.pt.add(hitPt); c.n++;
       } else d.addWound(r.bone, hitPt, dirV, 'bullet', !!def.gib);
-      d.hit(r.bone, def.dmg, tv.copy(dirV).multiplyScalar(def.push), hitPt, { bullet: true, big: !!def.gib, dir: dirV });
+      d.hit(r.bone, def.dmg * mul, tv.copy(dirV).multiplyScalar(def.push), hitPt, { bullet: true, big: !!def.gib && mul > 0.8, dir: dirV });
       hitsPer.set(d, (hitsPer.get(d) || 0) + 1);
     } else if (r.kind === 'wall') { gore.sparks(hitPt, 3); opsNoise(hitPt, 3.5); }
     else if (r.kind === 'player') {
@@ -2052,7 +2063,8 @@ function drawHud() {
   const [st, stCol] = stealthStatus();
   const gun = (inVR ? vrHands : [desk]).map(h => h.held?.type === 'tool' ? h.held.tool : null).find(reloadable);
   const ammo = gun ? ammoText(gun) : '';
-  const key = hp + st + ammo + S.god;
+  const gad = gadgetText();
+  const key = hp + st + ammo + S.god + gad;
   if (key === drawHud.last) return;
   drawHud.last = key;
   const g = wristCanvas.getContext('2d');
@@ -2062,14 +2074,16 @@ function drawHud() {
   g.fillStyle = '#fff'; g.font = 'bold 30px Helvetica, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillText(S.god ? 'GOD' : hp, 128, 33);
   g.fillStyle = stCol; g.font = 'bold 26px Helvetica, Arial, sans-serif'; g.fillText(st, 128, 76);
-  g.fillStyle = '#e6e9ed'; g.font = 'bold 28px Helvetica, Arial, sans-serif'; g.fillText(ammo, 128, 110);
+  g.fillStyle = '#e6e9ed'; g.font = 'bold 26px Helvetica, Arial, sans-serif'; g.fillText(ammo, 128, 106);
+  g.fillStyle = '#35e0ff'; g.font = 'bold 15px Helvetica, Arial, sans-serif'; g.fillText(gad.slice(0, 30), 128, 128);
   g.textAlign = 'left'; g.font = '17px Helvetica, Arial, sans-serif';
-  objectiveLines().forEach(([ok, txt], i) => { g.fillStyle = ok ? '#5f6b5c' : '#d7dde4'; g.fillText((ok ? '✔ ' : '▢ ') + txt.slice(0, 26), 12, 142 + i * 22); });
+  objectiveLines().forEach(([ok, txt], i) => { g.fillStyle = ok ? '#5f6b5c' : '#d7dde4'; g.fillText((ok ? '✔ ' : '▢ ') + txt.slice(0, 26), 12, 150 + i * 21); });
   wristTex.needsUpdate = true;
   $('hpFill').style.width = hp + '%'; $('hpFill').style.background = hp > 30 ? '#5fae5a' : '#e5484d';
   $('hpText').textContent = S.god ? 'GOD MODE' : hp;
   $('status').textContent = st; $('status').style.color = stCol;
   $('ammo').textContent = ammo;
+  $('gadget').textContent = gad;
 }
 
 function damagePlayer(n) {
@@ -2197,6 +2211,7 @@ const UI_ROWS = [
     act: () => { if (OPS.done) playLevel(LEVELS[Math.min(LEVELS.length - 1, lvlIndex() + 1)].key); else { const first = !played; closeMenu(); if (first || OPS.time < 0.5) missionBanner(); } } },
   { sel: true, label: () => 'MISSION ' + (lvlIndex() + 1) + ':  ' + LEVEL().name + (BEST[LEVEL().key] ? '  · ' + BEST[LEVEL().key] : ''),
     act: d => playLevel(LEVELS[(lvlIndex() + d + LEVELS.length) % LEVELS.length].key) },
+  { sel: true, label: () => 'OPERATOR:  ' + OP().name + ' · ' + OP().role + (played ? '  (restarts)' : ''), act: d => { S.op = (S.op + d + OPERATORS.length) % OPERATORS.length; saveSettings(); if (played) fullReset(); } },
   { label: () => 'RESTART MISSION', act: () => playLevel(S.map) },
   { sel: true, label: () => 'DIFFICULTY:  ' + DIFF[S.diff].name + (played ? '  (restarts)' : ''), act: d => { S.diff = (S.diff + d + DIFF.length) % DIFF.length; saveSettings(); if (played) fullReset(); } },
   { sel: true, label: () => 'MUSIC:  ' + trackName(), act: d => setTrack((S.track + 1 + d + music.tracks.length + 1) % (music.tracks.length + 1) - 1) },
@@ -2204,7 +2219,6 @@ const UI_ROWS = [
   { sel: true, label: () => 'HEIGHT:  ' + fmtHeight(), act: d => setHeight(S.height + d * 0.05) },
   { label: () => 'BRIEFING & CONTROLS', act: () => { UI.help = 0; } },
   { label: () => 'GORE:  ' + goreName(), act: () => { UI.gore = true; } },
-  { label: () => 'GLOVES', act: () => { UI.shop = true; } },
   { label: () => OPS.result ? 'LAST RUN: ' + OPS.result : 'Stay quiet. Leave no one to raise the alarm.', act: () => {} },
 ];
 // ---- gore level: four presets, or tune each part by hand (that makes it Custom)
@@ -2295,7 +2309,7 @@ const HELP = [
     'Second hand on a long gun\'s barrel steadies it.',
     'Let go of a weapon at a hip or shoulder to holster it.',
     'With no gun in hand: right A crouch, others show objectives.',
-    'Click a stick: this menu.',
+    'Right stick click: this menu. Left stick click: use gadget. Left X: next gadget.',
   ]],
   ['DESKTOP CONTROLS', [
     'WASD move · Shift run · C / Ctrl crouch · Space jump / stand',
@@ -2817,7 +2831,11 @@ function startMission() {
   Object.assign(AMMO, AMMO_START);
   sfx.alarm(false);
   const L = LEVEL();
-  HELP[0] = [L.op, [...L.story, 'Red diamonds: targets. Yellow: intel. Green: exfil.', 'You bring a suppressed pistol and a knife.']];
+  HELP[0] = [L.op, [...L.story, 'Red diamonds: targets. Yellow: intel. Green: exfil.']];
+  const blurb = OP().blurb.match(/.{1,52}(\s|$)/g).map(x => x.trim());
+  const opPage = ['OPERATOR: ' + OP().name, [OP().role + ' · ' + Object.entries(OP().gadgets).map(([k, n]) => n + ' ' + GADGET_NAMES[k].toLowerCase()).join(', '), ...blurb,
+    'Gadgets: ' + (inVR ? 'left X picks, left stick click uses.' : '4 picks, G uses.'), 'Drone: drive it, ' + (inVR ? 'trigger' : 'click') + ' marks guards through walls.', 'Breach: use on a soft wall, then use again to blow it.']];
+  if (HELP[1][0].startsWith('OPERATOR')) HELP[1] = opPage; else HELP.splice(1, 0, opPage);
   for (const [path, opt] of L.guards) spawnGuard(path, opt);
   for (const T of L.targets) {
     const d = spawnGuard(T.path, { wait: T.wait, civ: T.civ, pistol: T.o.pistol, name: T.name }, T.o);
@@ -2829,6 +2847,7 @@ function startMission() {
     OPS.intel.push({ ...I, mesh: m, got: false, mark: marker(0xffd23f) });
   }
   OPS.exfilMark = marker(0x38e07b); OPS.exfilMark.visible = false;
+  initGadgets(); buildCams();
   // the exfil zone glows on the floor once you're cleared to leave
   OPS.exfilRing = new THREE.Mesh(new THREE.RingGeometry(EXFIL.r - 0.12, EXFIL.r, 32), new THREE.MeshBasicMaterial({ color: 0x38e07b, transparent: true, opacity: 0.6, side: THREE.DoubleSide }));
   OPS.exfilRing.rotation.x = -Math.PI / 2; OPS.exfilRing.position.set(EXFIL.x, 0.02, EXFIL.z); OPS.exfilRing.visible = false; OPS.group.add(OPS.exfilRing);
@@ -2860,6 +2879,7 @@ function losClear(a, b) {
 const crouched = () => headPos().y - P.y < 1.25;
 const eyeV = new V3(), fwdV = new V3();
 function canSee(d, g, head, dif) {
+  if (g.blindT > 0) return 0;
   const eye = eyeV.copy(d.p.head.pos);
   const dx = head.x - eye.x, dz = head.z - eye.z, dist = Math.hypot(dx, dz);
   const range = (crouched() ? 9 : 16) * (g.state === 'patrol' ? 1 : 1.35) * (OPS.alarm > 0 ? 1.2 : 1);
@@ -2962,7 +2982,7 @@ function updateGuards(sdt) {
     const run = OPS.moveSpd > 4, quiet = crouched();
     OPS.stepT = run ? 0.32 : 0.5;
     sfx.step(quiet ? 0.02 : run ? 0.12 : 0.06);
-    if (!quiet) opsNoise(tv.set(head.x, 1, head.z), run ? 6 : 2.2);
+    if (!quiet && !OP().silent) opsNoise(tv.set(head.x, 1, head.z), run ? 6 : 2.2);
   }
   if (OPS.alarm > 0 && (OPS.alarm -= sdt) <= 0) {
     OPS.alarm = 0; sfx.alarm(false); setMusic(false); banner('ALARM OFF', 'They’re still looking', 2);
@@ -2991,9 +3011,10 @@ function updateGuards(sdt) {
     if (g.radioT > 0 && (g.radioT -= sdt) <= 0) { sfx.radio(); raiseAlarm(); }
 
     // eyes
+    if (g.blindT > 0) { g.blindT -= sdt; d.hold = null; if (g.blindT <= 0 && !g.hostile) setState(d, 'search'); }
     if ((g.seeT -= sdt) <= 0) { g.seeT = 0.1; g.canSee = canSee(d, g, head, dif); }
     if (g.canSee && !P.dead) {
-      const rate = (0.2 + 1.3 * g.canSee * g.canSee) * dif.see * (crouched() ? 0.6 : 1) * (OPS.moveSpd > 2 ? 1.4 : 1) * (g.state === 'patrol' ? 1 : 1.6);
+      const rate = (0.2 + 1.3 * g.canSee * g.canSee) * dif.see * (OP().silent ? 0.7 : 1) * (crouched() ? 0.6 : 1) * (OPS.moveSpd > 2 ? 1.4 : 1) * (g.state === 'patrol' ? 1 : 1.6);
       g.sus = Math.min(1, g.sus + rate * sdt);
       if (g.sus > 0.3 && !g.hostile) { g.last.copy(head); if (g.state === 'patrol') setState(d, 'investigate'); }
       if (g.sus >= 1) engage(d, head);
@@ -3156,6 +3177,377 @@ function missionComplete() {
   OPS.endT = 7.5; drawObjectives();
 }
 
+// ------------------------------------------------------------ operators + gadgets
+// Desktop: 4 picks the next gadget, G uses it.
+// VR: left stick click uses it; left X (no gun in that hand) picks the next one.
+const OP = () => OPERATORS[S.op] ?? OPERATORS[0];
+const GADGET_NAMES = { drone: 'DRONE', breach: 'BREACH CHARGE', flash: 'FLASHBANG', heartbeat: 'HEARTBEAT SENSOR' };
+const GD = { have: {}, list: [], sel: 0, planted: [], flashes: [], debris: [], hb: { on: false, battery: 0, pulseT: 0 }, whiteT: 0 };
+function initGadgets() {
+  const g = OP().gadgets;
+  GD.have = { ...g }; GD.list = Object.keys(g); GD.sel = 0;
+  for (const c of GD.planted) scene.remove(c.mesh);
+  for (const f of GD.flashes) { scene.remove(f.mesh); world.particles.splice(world.particles.indexOf(f.p), 1); }
+  for (const d of GD.debris) scene.remove(d.m);
+  GD.planted = []; GD.flashes = []; GD.debris = [];
+  GD.hb = { on: false, battery: g.heartbeat ? 25 : 0, pulseT: 0 };
+  GD.whiteT = 0;
+  droneReset();
+  Dummy.assassin = !!OP().assassin;
+}
+const curGadget = () => GD.list[GD.sel];
+function gadgetText() {
+  const k = curGadget();
+  if (!k) return '';
+  if (DR.active) return 'DRONE · ' + (inVR ? 'trigger' : 'click') + ' to mark · ' + (inVR ? 'stick click' : 'G') + ' to leave';
+  const n = k === 'heartbeat' ? Math.ceil(GD.hb.battery) + 's' + (GD.hb.on ? ' ON' : '') : k === 'drone' && DR.drone && !DR.dead ? 'OUT' : '×' + (GD.have[k] ?? 0);
+  const armed = GD.planted.length ? ' · ' + GD.planted.length + ' PLANTED' : '';
+  return GADGET_NAMES[k] + ' ' + n + armed;
+}
+function nextGadget() { if (GD.list.length) { GD.sel = (GD.sel + 1) % GD.list.length; sfx.tick(); } }
+// where you're pointing: the crosshair on desktop, the left hand in VR
+const aimO = new V3(), aimD = new V3();
+function gadgetAim() {
+  if (inVR) { const h = vrHands.find(x => x.side === 'left') ?? vrHands[0]; aimO.copy(h.pos); aimD.copy(NEG_Z).applyQuaternion(h.quat); }
+  else { aimO.copy(headPos()); aimD.copy(NEG_Z).applyQuaternion(camera.getWorldQuaternion(tq)); }
+}
+function useGadget() {
+  if (paused || P.dead) return;
+  if (DR.active) { droneExit(); return; }
+  const k = curGadget();
+  if (!k) return;
+  if (k === 'drone') return droneUse();
+  if (k === 'heartbeat') { if (GD.hb.battery > 0) { GD.hb.on = !GD.hb.on; sfx.beep(); } return; }
+  if (k === 'flash') return throwFlash();
+  if (k === 'breach') return breachUse();
+}
+
+// ---- breach charges: stick one on a soft wall, use again to blow it
+const chargeGeo = new THREE.BoxGeometry(0.34, 0.24, 0.05);
+function breachUse() {
+  gadgetAim();
+  const r = hitscan(aimO, aimD);
+  if (r.kind === 'soft' && r.t < 2.6 && GD.have.breach > 0 && !GD.planted.some(c => c.sw === r.soft)) {
+    GD.have.breach--;
+    const at = new V3().copy(aimO).addScaledVector(aimD, r.t - 0.03);
+    const b = r.soft.box, n = new V3();
+    // which face did we hit: push the charge onto it, facing out
+    const dx = Math.min(Math.abs(at.x - b.min.x), Math.abs(at.x - b.max.x)), dz = Math.min(Math.abs(at.z - b.min.z), Math.abs(at.z - b.max.z));
+    if (dx < dz) n.set(Math.abs(at.x - b.min.x) < Math.abs(at.x - b.max.x) ? -1 : 1, 0, 0); else n.set(0, 0, Math.abs(at.z - b.min.z) < Math.abs(at.z - b.max.z) ? -1 : 1);
+    const m = new THREE.Mesh(chargeGeo, M.olive); m.position.copy(at); m.lookAt(tv.copy(at).add(n));
+    const led = new THREE.Mesh(new THREE.SphereGeometry(0.015, 6, 4), new THREE.MeshBasicMaterial({ color: 0xff2200 })); led.position.set(0.12, 0.08, 0.03); m.add(led);
+    box(m, M.orange, 0.34, 0.03, 0.052, 0, -0.07, 0);
+    scene.add(m);
+    GD.planted.push({ sw: r.soft, mesh: m, led, t: 0 });
+    sfx.tick(); sfx.beep(); pulseAll(0.5, 40);
+    banner('CHARGE SET', (inVR ? 'Stick click' : 'G') + ' again away from a wall to blow it', 1.6);
+    return;
+  }
+  if (GD.planted.length) {   // detonate everything planted
+    for (const c of GD.planted) {
+      scene.remove(c.mesh);
+      blast(c.mesh.position.clone(), 3.2);
+      breachWall(c.sw, c.mesh.position);
+    }
+    GD.planted = [];
+    return;
+  }
+  banner('NO SOFT WALL', 'Point at a drywall / sheet metal wall within 2.5 m', 1.6);
+}
+// a wall coming apart: chunks fly, everyone nearby hears it
+function breachWall(sw, at) {
+  if (sw.gone) return;
+  breachSoft(sw, world.boxes);
+  const [x0, z0, x1, z1] = sw.rect, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  const mat = new THREE.MeshLambertMaterial({ color: sw.metal ? 0x7a7f76 : 0xc9c4b8 });
+  for (let i = 0; i < 22; i++) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.06 + Math.random() * 0.18, 0.04 + Math.random() * 0.12, 0.02 + Math.random() * 0.05), mat);
+    m.position.set(x0 + Math.random() * (x1 - x0), 0.3 + Math.random() * 2.6, z0 + Math.random() * (z1 - z0));
+    const away = tv.subVectors(m.position, at ?? m.position).setY(0);
+    const v = new V3((Math.random() - 0.5) * 4, 1 + Math.random() * 3, (Math.random() - 0.5) * 4).addScaledVector(away.lengthSq() > 0.01 ? away.normalize() : away, -3);
+    scene.add(m); GD.debris.push({ m, v, spin: new V3(Math.random() * 9, Math.random() * 9, 0), t: 30 });
+  }
+  if (GD.debris.length > 200) for (const d of GD.debris.splice(0, GD.debris.length - 200)) scene.remove(d.m);
+  opsNoise(tv.set(cx, 1, cz), 28, true);
+}
+function breachNear(c, R) {   // explosions take out soft walls next to them
+  for (const sw of SOFT) {
+    if (sw.gone) continue;
+    const b = sw.box, dx = Math.max(b.min.x - c.x, 0, c.x - b.max.x), dz = Math.max(b.min.z - c.z, 0, c.z - b.max.z);
+    if (Math.hypot(dx, dz) < R) breachWall(sw, c);
+  }
+}
+
+// ---- flashbangs
+const flashGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.11, 10);
+function throwFlash() {
+  if (!(GD.have.flash > 0)) { banner('NO FLASHBANGS', '', 1); return; }
+  GD.have.flash--;
+  gadgetAim();
+  const m = new THREE.Mesh(flashGeo, M.grey); scene.add(m);
+  const p = world.add(new Particle(aimO.x + aimD.x * 0.3, aimO.y + aimD.y * 0.3, aimO.z + aimD.z * 0.3, 0.04, 1)); p.bounce = 0.35;
+  const hv = inVR ? (vrHands.find(x => x.side === 'left') ?? vrHands[0]).vel : tv2.set(0, 0, 0);
+  p.setVelocity(tv.copy(aimD).multiplyScalar(inVR ? 6 : 11).add(hv).add(tv3.set(0, 2, 0)), world.dt);
+  GD.flashes.push({ p, m, fuse: 1.6 });
+  sfx.tick();
+}
+function popFlash(f) {
+  const c = f.p.pos;
+  sfx.boom(); sfx.alert();
+  const mesh = new THREE.Mesh(blastGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, depthWrite: false }));
+  mesh.position.copy(c); scene.add(mesh); explosions.push({ mesh, t: 0, size: 0.5 });
+  for (const d of dummies) {
+    const g = d.guard;
+    if (!g || !d.alive) continue;
+    const dist = d.p.head.pos.distanceTo(c);
+    if (dist < 10 && losClear(eyeV.copy(d.p.head.pos), c)) {
+      g.blindT = 5 * (1 - dist / 14); d.stun = 1.5; g.canSee = 0; g.sus = Math.max(g.sus, 0.8);
+      if (d.state === 'stand' && dist < 4) d.knockdown(1.2);
+    }
+  }
+  // and you, if you were looking at it
+  const head = headPos(), dist = head.distanceTo(c);
+  if (dist < 9 && losClear(head, c)) {
+    camera.getWorldDirection(tv);
+    const facing = tv.dot(tv2.subVectors(c, head).normalize());
+    GD.whiteT = Math.max(GD.whiteT, (facing > 0.3 ? 2.6 : 0.8) * (1 - dist / 12));
+  }
+  opsNoise(c, 20, true);
+}
+// a white-out over your eyes after a flash
+const whiteMesh = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 8),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide, transparent: true, opacity: 0, depthTest: false, depthWrite: false }));
+whiteMesh.renderOrder = 999; whiteMesh.visible = false; whiteMesh.layers.set(EYES_ONLY); camera.add(whiteMesh);
+
+// ---- recon drone: drive it, mark guards through its camera
+const DR = { drone: null, active: false, dead: false, yaw: 0, pitch: 0, vel: new V3(), cam: new THREE.PerspectiveCamera(80, 4 / 3, 0.03, 60), rt: null, tablet: null, seenT: 0, pingCd: 0 };
+DR.cam.rotation.order = 'YXZ'; DR.cam.layers.enable(MIRROR_ONLY); DR.cam.layers.disable(EYES_ONLY);
+function droneMesh() {
+  const g = new THREE.Group();
+  box(g, M.dark, 0.2, 0.07, 0.16, 0, 0.07, 0);
+  for (const sx of [-1, 1]) { const w = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.03, 14), M.black); w.rotation.z = Math.PI / 2; w.position.set(sx * 0.115, 0.065, 0); g.add(w); }
+  const lens = new THREE.Mesh(new THREE.SphereGeometry(0.022, 10, 8), M.glass); lens.position.set(0, 0.09, -0.08); g.add(lens);
+  const led = new THREE.Mesh(new THREE.SphereGeometry(0.008, 6, 4), M.cyan); led.position.set(0, 0.11, 0.06); g.add(led);
+  return g;
+}
+function droneReset() {
+  if (DR.drone) scene.remove(DR.drone);
+  DR.drone = null; DR.active = false; DR.dead = false; GD.droneLeft = GD.have.drone ?? 0;
+  if (DR.tablet) DR.tablet.visible = false;
+}
+function droneUse() {
+  if (DR.drone && !DR.dead) { droneEnter(); return; }
+  if (!(GD.have.drone > 0)) { banner('NO DRONES LEFT', '', 1.2); return; }
+  GD.have.drone--;
+  if (DR.drone) scene.remove(DR.drone);
+  DR.drone = droneMesh(); DR.dead = false; scene.add(DR.drone);
+  const head = headPos(); camera.getWorldDirection(tv); tv.y = 0; tv.normalize();
+  DR.drone.position.set(head.x + tv.x * 0.6, 0, head.z + tv.z * 0.6);
+  DR.yaw = Math.atan2(-tv.x, -tv.z); DR.pitch = 0.05;
+  droneEnter();
+}
+function droneEnter() {
+  DR.active = true; sfx.radio();
+  if (inVR) {
+    if (!DR.rt) DR.rt = new THREE.WebGLRenderTarget(512, 384);
+    if (!DR.tablet) {
+      DR.tablet = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.18), new THREE.MeshBasicMaterial({ map: DR.rt.texture }));
+      DR.tablet.position.set(0, 0.11, -0.06); DR.tablet.rotation.x = -0.9;
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.2, 0.01), M.black); frame.position.z = -0.006; DR.tablet.add(frame);
+    }
+    const lh = vrHands.find(x => x.side === 'left') ?? vrHands[0];
+    lh.ctrl.add(DR.tablet); DR.tablet.visible = true;
+  }
+  $('droneHud').hidden = inVR;
+}
+function droneExit() { DR.active = false; if (DR.tablet) DR.tablet.visible = false; $('droneHud').hidden = true; sfx.tick(); }
+function droneLost() { DR.dead = true; droneExit(); if (DR.drone) { gore.sparks(DR.drone.position, 12); scene.remove(DR.drone); } DR.drone = null; banner('DRONE LOST', '', 1.5); }
+// move it about: boxes at floor height block it, beams overhead don't
+function updateDrone(dt) {
+  if (!DR.drone || DR.dead) return;
+  let f = 0, s = 0, turn = 0, tilt = 0;
+  if (DR.active) {
+    if (inVR) {
+      for (const h of vrHands) {
+        const gp = h.src?.gamepad; if (!gp) continue;
+        const ax = gp.axes.length >= 4 ? gp.axes[2] : gp.axes[0] || 0, ay = gp.axes.length >= 4 ? gp.axes[3] : gp.axes[1] || 0;
+        if (h.side === 'left') { f = Math.abs(ay) > 0.15 ? -ay : 0; s = Math.abs(ax) > 0.15 ? ax : 0; }
+        else { turn = Math.abs(ax) > 0.2 ? -ax : 0; tilt = Math.abs(ay) > 0.2 ? -ay : 0; }
+      }
+      DR.yaw += turn * 2.2 * dt; DR.pitch = Math.max(-0.6, Math.min(0.9, DR.pitch + tilt * 1.5 * dt));
+    } else {
+      f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0); s = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+      if (keys.ArrowLeft) DR.yaw += 1.8 * dt; if (keys.ArrowRight) DR.yaw -= 1.8 * dt;
+    }
+  }
+  const sp = 2.4, d = DR.drone.position;
+  DR.vel.lerp(tv.set((-Math.sin(DR.yaw) * f + Math.cos(DR.yaw) * s) * sp, 0, (-Math.cos(DR.yaw) * f - Math.sin(DR.yaw) * s) * sp), Math.min(1, dt * 8));
+  d.addScaledVector(DR.vel, dt);
+  const r = 0.14;
+  for (const b of world.boxes) {
+    if (b.min.y > 0.2 || b.max.y < 0.05) continue;
+    const x1 = d.x - (b.min.x - r), x2 = (b.max.x + r) - d.x, z1 = d.z - (b.min.z - r), z2 = (b.max.z + r) - d.z;
+    if (x1 <= 0 || x2 <= 0 || z1 <= 0 || z2 <= 0) continue;
+    const m = Math.min(x1, x2, z1, z2);
+    if (m === x1) d.x -= x1; else if (m === x2) d.x += x2; else if (m === z1) d.z -= z1; else d.z += z2;
+  }
+  const lim = HALF - 0.3; d.x = Math.max(-lim, Math.min(lim, d.x)); d.z = Math.max(-lim, Math.min(lim, d.z));
+  DR.drone.rotation.y = DR.yaw;
+  DR.cam.position.set(d.x - Math.sin(DR.yaw) * 0.08, 0.1, d.z - Math.cos(DR.yaw) * 0.08);
+  DR.cam.rotation.set(DR.pitch, DR.yaw, 0);
+  DR.cam.updateMatrixWorld();
+  if (DR.vel.lengthSq() > 0.2 && Math.random() < dt * 6) sfx.step(0.015);
+  // pinging: trigger in VR, click on desktop
+  DR.pingCd -= dt;
+  const right = vrHands.find(x => x.side === 'right') ?? vrHands[1];
+  const want = DR.active && (inVR ? right.trigger && !right.droneWas : DR.click);
+  if (inVR) right.droneWas = right.trigger;
+  DR.click = false;
+  if (want && DR.pingCd <= 0) dronePing();
+  // guards who spot a drone come and shoot it
+  for (const dm of dummies) {
+    const g = dm.guard;
+    if (!g || !dm.alive || dm.state !== 'stand' || g.blindT > 0) continue;
+    const e = dm.p.head.pos, dx = d.x - e.x, dz = d.z - e.z, dist = Math.hypot(dx, dz);
+    if (dist > 7 || (Math.sin(dm.yaw) * dx + Math.cos(dm.yaw) * dz) / dist < 0.5) continue;
+    if (!losClear(eyeV.copy(e), tv.set(d.x, 0.15, d.z))) continue;
+    DR.seenT += dt * (dist < 3 ? 1.6 : 0.8);
+    if (DR.seenT > 1.4) {
+      DR.seenT = 0;
+      if (it(dm)) { gunFrom.copy(dm.item.mesh.position); tracer(gunFrom, d); sfx.shot(dm.rifle ? 'rifle' : 'pistol'); }
+      g.last.copy(d); g.sus = Math.max(g.sus, 0.6); setState(dm, 'investigate');
+      droneLost(); return;
+    }
+  }
+}
+const pingV = new V3();
+function dronePing() {
+  DR.pingCd = 0.4;
+  DR.cam.getWorldDirection(aimD);
+  let n = 0;
+  for (const d of dummies) {
+    if (!d.guard || !d.alive) continue;
+    pingV.subVectors(d.p.chest.pos, DR.cam.position);
+    const dist = pingV.length();
+    if (dist > 25 || pingV.normalize().dot(aimD) < 0.94 || !losClear(DR.cam.position, d.p.chest.pos)) continue;
+    d.markT = 40; n++;
+  }
+  for (const c of CAMS) { pingV.subVectors(c.pos, DR.cam.position); if (pingV.length() < 25 && pingV.normalize().dot(aimD) > 0.94 && losClear(DR.cam.position, c.pos)) { c.marked = true; n++; } }
+  if (n) { sfx.pickup(); banner('MARKED', n + (n > 1 ? ' contacts' : ' contact'), 1); } else sfx.tick();
+}
+function renderDroneFeed() {
+  if (!DR.active || !inVR || !DR.rt) return;
+  const xr = renderer.xr.enabled, prev = renderer.getRenderTarget();
+  renderer.xr.enabled = false;
+  renderer.setRenderTarget(DR.rt); renderer.clear(); renderer.render(scene, DR.cam);
+  renderer.setRenderTarget(prev); renderer.xr.enabled = xr;
+}
+
+// ---- marked guards: a red chevron over their heads you can see through walls
+const markTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d'); g.fillStyle = '#ff3b30'; g.strokeStyle = '#000'; g.lineWidth = 4;
+  g.beginPath(); g.moveTo(8, 14); g.lineTo(32, 50); g.lineTo(56, 14); g.lineTo(32, 28); g.closePath(); g.stroke(); g.fill();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+function updateMarks(dt) {
+  const head = headPos();
+  for (const d of dummies) {
+    if (!d.guard) continue;
+    d.markT = Math.max(0, (d.markT ?? 0) - dt);
+    const show = d.alive && d.markT > 0 && !d.gone;
+    if (show && !d.markSprite) {
+      d.markSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: markTex, depthTest: false, transparent: true }));
+      d.markSprite.renderOrder = 996; OPS.group.add(d.markSprite);
+    }
+    if (!d.markSprite) continue;
+    d.markSprite.visible = show;
+    if (!show) continue;
+    d.markSprite.position.copy(d.p.head.pos).add(tv.set(0, 0.62, 0));
+    const s = Math.max(0.16, head.distanceTo(d.markSprite.position) * 0.025);
+    d.markSprite.scale.setScalar(s);
+    d.markSprite.material.opacity = d.markT < 3 ? 0.4 + 0.6 * (Math.sin(OPS.time * 10) > 0 ? 1 : 0.3) : 0.95;
+  }
+}
+// heartbeat sensor: anyone within 14 m flashes up every pulse while it's on
+function updateHeartbeat(dt) {
+  const hb = GD.hb;
+  if (!hb.on) return;
+  hb.battery -= dt;
+  if (hb.battery <= 0) { hb.battery = 0; hb.on = false; banner('SENSOR FLAT', '', 1); return; }
+  if ((hb.pulseT -= dt) <= 0) {
+    hb.pulseT = 1.4; sfx.step(0.05);
+    const head = headPos();
+    for (const d of dummies) if (d.guard && d.alive && d.p.chest.pos.distanceTo(head) < 14) d.markT = Math.max(d.markT ?? 0, 1.3);
+  }
+}
+
+// ---- security cameras: sweep back and forth; let one watch you and it sounds the alarm
+const CAMS = [];
+const camBodyGeo = new THREE.BoxGeometry(0.14, 0.12, 0.3), camLensGeo = new THREE.CylinderGeometry(0.045, 0.05, 0.05, 12);
+function buildCams() {
+  for (const c of CAMS) scene.remove(c.root);
+  CAMS.length = 0;
+  for (const [x, y, z, yaw, sweep] of LEVEL().cams ?? []) {
+    const root = new THREE.Group(); root.position.set(x, y, z); OPS.group.add(root);
+    box(root, M.grey, 0.12, 0.12, 0.12, 0, 0.08, 0);   // wall mount
+    const head = new THREE.Group(); root.add(head);
+    const body = new THREE.Mesh(camBodyGeo, M.white); body.position.z = 0.12; head.add(body);
+    const lens = new THREE.Mesh(camLensGeo, M.black); lens.rotation.x = Math.PI / 2; lens.position.z = 0.28; head.add(lens);
+    const led = new THREE.Mesh(new THREE.SphereGeometry(0.018, 6, 4), new THREE.MeshBasicMaterial({ color: 0x33ff55 })); led.position.set(0.05, 0.07, 0.2); head.add(led);
+    // a faint cone so you can read where it's looking
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(1.6, 6, 16, 1, true), new THREE.MeshBasicMaterial({ color: 0xff4040, transparent: true, opacity: 0.05, depthWrite: false, side: THREE.DoubleSide }));
+    cone.rotation.x = -Math.PI / 2; cone.position.z = 3.2; head.rotation.x = 0.35; head.add(cone);
+    CAMS.push({ root, head, led, cone, pos: new V3(x, y, z), yaw0: yaw, sweep, t: Math.random() * 6, see: 0, dead: false, marked: false });
+  }
+}
+function updateCams(dt) {
+  const head = headPos(), dif = DIFF[S.diff];
+  for (const c of CAMS) {
+    if (c.dead) continue;
+    c.t += dt;
+    const yaw = c.yaw0 + Math.sin(c.t * 0.45) * c.sweep;
+    c.head.rotation.y = yaw;
+    const dx = head.x - c.pos.x, dz = head.z - c.pos.z, dist = Math.hypot(dx, dz);
+    const range = crouched() ? 9 : 15;
+    let sees = false;
+    if (dist < range && !freecam && !P.dead) {
+      const cosA = (Math.sin(yaw) * dx + Math.cos(yaw) * dz) / dist;
+      sees = cosA > 0.86 && losClear(c.pos, head);
+    }
+    c.see = sees ? Math.min(1, c.see + dt * 0.75 * dif.see * (OP().silent ? 0.7 : 1)) : Math.max(0, c.see - dt * 0.4);
+    c.led.material.color.setHex(c.see > 0 ? (Math.sin(c.t * (8 + c.see * 30)) > 0 ? 0xff2020 : 0x330000) : 0x33ff55);
+    c.cone.material.opacity = 0.04 + c.see * 0.2;
+    if (sees && c.see > 0.05 && Math.random() < dt * 3) sfx.tick();
+    if (c.see >= 1) {
+      c.see = 0; OPS.seen++;
+      banner('CAMERA', 'Security saw you', 1.6);
+      raiseAlarm();
+    }
+  }
+}
+function destroyCam(c, at) {
+  c.dead = true; c.led.material.color.setHex(0x111111); c.cone.visible = false;
+  c.head.rotation.x = 1.1; gore.sparks(at ?? c.pos, 14); sfx.thud();
+  opsNoise(c.pos, 4);
+}
+
+function updateGadgets(dt) {
+  updateDrone(dt); updateMarks(dt); updateHeartbeat(dt); updateCams(dt);
+  for (let i = GD.flashes.length - 1; i >= 0; i--) {
+    const f = GD.flashes[i];
+    f.m.position.copy(f.p.pos); f.m.rotation.x += dt * 9;
+    if ((f.fuse -= dt) <= 0) { popFlash(f); scene.remove(f.m); world.particles.splice(world.particles.indexOf(f.p), 1); GD.flashes.splice(i, 1); }
+  }
+  for (const c of GD.planted) c.led.visible = Math.sin(OPS.time * 9) > 0;
+  for (let i = GD.debris.length - 1; i >= 0; i--) {
+    const d = GD.debris[i];
+    if (d.m.position.y > 0.03) { d.v.y -= 9.8 * dt; d.m.position.addScaledVector(d.v, dt); d.m.rotation.x += d.spin.x * dt; d.m.rotation.y += d.spin.y * dt; if (d.m.position.y < 0.03) { d.m.position.y = 0.03; d.v.set(0, 0, 0); } }
+  }
+  GD.whiteT = Math.max(0, GD.whiteT - dt);
+  whiteMesh.visible = GD.whiteT > 0; whiteMesh.material.opacity = Math.min(1, GD.whiteT);
+}
+
 // ------------------------------------------------------------ player movement
 const keys = {};
 let yaw = 0, pitch = 0, locked = false, noLock = false, dragging = false, freecam = false, teleported = false;
@@ -3199,6 +3591,7 @@ function clampRig() {
   if (p.z > lim) rig.position.z -= p.z - lim; else if (p.z < -lim) rig.position.z -= p.z + lim;
 }
 function desktopMove(dt) {
+  if (DR.active) { camera.rotation.set(pitch, yaw, 0); return; }
   if (paused && !freecam) { camera.rotation.set(pitch, yaw, 0); return; }
   const look = 1.8 * dt;
   if (keys.ArrowLeft) yaw += look; if (keys.ArrowRight) yaw -= look;
@@ -3225,6 +3618,12 @@ function vrMove(dt) {
     if (!gp) continue;
     const ax = gp.axes.length >= 4 ? gp.axes[2] : gp.axes[0] || 0, ay = gp.axes.length >= 4 ? gp.axes[3] : gp.axes[1] || 0;
     const left = h.src.handedness === 'left';
+    if (DR.active) {
+      const click = !!gp.buttons[3]?.pressed;
+      if (click && !h.stickWas) useGadget();
+      h.stickWas = click;
+      continue;
+    }
     if (h.held?.tool?.def.spawner) {
       h.navCd = (h.navCd ?? 0) - dt;
       if (Math.abs(ax) < 0.4 && Math.abs(ay) < 0.4) h.navCd = 0;
@@ -3251,7 +3650,7 @@ function vrMove(dt) {
     if (Math.abs(ay) < 0.3) h.stickY = false;
     // clicking either stick opens / closes the main menu
     const click = !!gp.buttons[3]?.pressed;
-    if (click && !h.stickWas) paused ? closeMenu() : openMenu();
+    if (click && !h.stickWas) { if (left && !paused) useGadget(); else paused ? closeMenu() : openMenu(); }
     h.stickWas = click;
     if (paused) continue;
     // face buttons: right A = jump, B = slow-mo; left X = hostile, Y = clear
@@ -3261,7 +3660,7 @@ function vrMove(dt) {
         // with a gun in this hand: A / X drops the mag, B / Y works the slide
         const t = h.held?.type === 'tool' ? h.held.tool : null;
         if (reloadable(t)) { if (!i) ejectMag(t, h); else rack(t, h); }
-        else if (!i && !left) toggleCrouch(); else showObjectives();
+        else if (!i && !left) toggleCrouch(); else if (!i && left) nextGadget(); else showObjectives();
       }
       h.btn[i] = down;
     }
@@ -3277,6 +3676,8 @@ addEventListener('keydown', e => {
   if (e.code === 'BracketRight') setHeight(S.height + 0.05);
   if (!paused && (e.code === 'KeyC' || e.code === 'ControlLeft')) toggleCrouch();
   if (!paused && e.code === 'KeyR') deskReload();
+  if (!paused && e.code === 'KeyG') useGadget();
+  if (!paused && e.code === 'Digit4') nextGadget();
   if (!paused && ['Digit1', 'Digit2', 'Digit3'].includes(e.code)) deskSlot(+e.code.slice(5));
   if (!paused && (e.code === 'KeyO' || e.code === 'Tab')) { e.preventDefault(); showObjectives(); }
   if (e.code === 'KeyM') { paused ? closeMenu() : openMenu(); return; }
@@ -3296,6 +3697,7 @@ canvas.addEventListener('mousedown', e => {
   if (e.button !== 0) return;
   if (paused) { mouseN.x = e.clientX / innerWidth * 2 - 1; mouseN.y = 1 - e.clientY / innerHeight * 2; menuClick(); return; }
   dragging = true;
+  if (DR.active) { DR.click = true; if (!locked && !noLock) { try { canvas.requestPointerLock()?.catch?.(() => { noLock = true; }); } catch { noLock = true; } } return; }
   if (!locked && !noLock) { try { canvas.requestPointerLock()?.catch?.(() => { noLock = true; }); } catch { noLock = true; } }
   desk.trigger = true; desk.pressed = true;   // remembered till the next frame, so a quick click still fires
   const tool = desk.held?.type === 'tool' ? desk.held.tool : null;
@@ -3316,6 +3718,7 @@ const mouseN = { x: 0, y: 0 };
 addEventListener('mousemove', e => {
   mouseN.x = e.clientX / innerWidth * 2 - 1; mouseN.y = 1 - e.clientY / innerHeight * 2;
   if (inVR || !(locked || dragging)) return;
+  if (DR.active) { DR.yaw -= e.movementX * 0.0024; DR.pitch = Math.max(-0.6, Math.min(0.9, DR.pitch - e.movementY * 0.0024)); return; }
   yaw -= e.movementX * 0.0024; pitch -= e.movementY * 0.0024;
 });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -3487,6 +3890,7 @@ function frame(time) {
     if (!paused) {
       updateExplosives(dt * world.scale);
       updateLoose(dt);
+      updateGadgets(dt);
       updateEnemies(dt * world.scale);
       updateFire(dt * world.scale);
       updateBolts(dt * world.scale);
@@ -3504,10 +3908,11 @@ function frame(time) {
     }
   }
   if (mirror && started) renderMirror();
-  renderer.render(scene, camera);
+  renderDroneFeed();
+  renderer.render(scene, DR.active && !inVR ? DR.cam : camera);
 }
 renderer.setAnimationLoop(frame);
 
 // for poking at things from the console
-window.lab = { OPS, AMMO, CR, findPath, deskReload, ejectMag, rack, opsNoise, raiseAlarm, fullReset, net, remotes, myPose, updateRemotes, fire, hitscan, hurtPlayer, get mirror() { return mirror; }, renderer, step(ms = 16.7, n = 1) { for (let i = 0; i < n; i++) frame(last + ms); }, snap() { frame(last + 16.7); return renderer.domElement.toDataURL('image/jpeg', 0.6); }, makeTool, setGore, bolts, holsters, jump, HELP, UI, UI_ROWS, MAPS, setMap, setTrack, setHeight, openMenu, closeMenu, menuActivate, music, get paused() { return paused; }, P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
+window.lab = { GD, DR, CAMS, get SOFT() { return SOFT; }, useGadget, nextGadget, walkable, OPS, AMMO, CR, findPath, deskReload, ejectMag, rack, opsNoise, raiseAlarm, fullReset, net, remotes, myPose, updateRemotes, fire, hitscan, hurtPlayer, get mirror() { return mirror; }, renderer, step(ms = 16.7, n = 1) { for (let i = 0; i < n; i++) frame(last + ms); }, snap() { frame(last + 16.7); return renderer.domElement.toDataURL('image/jpeg', 0.6); }, makeTool, setGore, bolts, holsters, jump, HELP, UI, UI_ROWS, MAPS, setMap, setTrack, setHeight, openMenu, closeMenu, menuActivate, music, get paused() { return paused; }, P, SV, damagePlayer, startSurvival, world, dummies, tools, barrels, balls, grenades, mines, rockets, menu, menuMove, S, gore, desk, rig, camera, press, grab, drop, spawnDummy, spawnBarrel,
   look(y, p) { yaw = y; pitch = p; }, get state() { return { started, inVR, freecam, locked, noLock }; } };

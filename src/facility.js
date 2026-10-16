@@ -5,7 +5,8 @@ import * as THREE from '../vendor/three.module.js';
 
 export const CEIL = 3.4;
 // the level being played (live bindings: importers always see the current one)
-export let SKY = null;   // sky, stars, moon / sun: kept centred on the player so none of it clips
+export let SKY = null;
+export let SOFT = [];   // breakable walls in this level: { rect, mesh, box, gone }   // sky, stars, moon / sun: kept centred on the player so none of it clips
 export let HALF = 34, ROOMS = {}, EXFIL = { x: 0, z: 0, r: 2 }, START = { x: 0, z: 0, yaw: 0 };
 
 // ---------------------------------------------------------------- wall grid
@@ -155,6 +156,7 @@ export function buildLevel(g, boxes, L) {
   for (const b of L.buildings) fill(b.box, 1);
   for (const r of Object.values(L.rooms)) fill(r, 0);
   for (const d of L.doors) fill(d, 0);
+  for (const r of L.soft ?? []) fill(r, 2);   // soft walls are built on their own so they can be blown open
 
   buildOutside(g, L);
   // each building: floor, ceiling, roof
@@ -169,7 +171,7 @@ export function buildLevel(g, boxes, L) {
     floor.rotation.x = -Math.PI / 2; floor.position.set(cx, 0.005, cz); g.add(floor);
     const ceil = new THREE.Mesh(new THREE.PlaneGeometry(w, d), ceilMat); ceil.rotation.x = Math.PI / 2; ceil.position.set(cx, CEIL, cz); g.add(ceil);
     const roof = new THREE.Mesh(new THREE.BoxGeometry(w + 0.4, 0.4, d + 0.4), roofMat); roof.position.set(cx, CEIL + 0.2, cz); g.add(roof);
-    styleOf.set(b, b.wallMat);
+    styleOf.set(b, b.wallMat); b.wallMat.userData.style = b.style;
   }
   const buildingAt = (x, z) => L.buildings.find(b => x >= b.box[0] && x <= b.box[2] && z >= b.box[1] && z <= b.box[3]) ?? L.buildings[0];
   for (const [x0, z0, x1, z1] of wallRects()) {
@@ -178,6 +180,29 @@ export function buildLevel(g, boxes, L) {
     m.position.set((x0 + x1) / 2, CEIL / 2, (z0 + z1) / 2); g.add(m);
     boxes.push({ min: V(x0, 0, z0), max: V(x1, CEIL, z1), wall: true });
   }
+  // soft walls: drywall in houses and offices, thin sheet metal in warehouses
+  SOFT = [];
+  const drywall = canvasTex(256, 256, (c, w, h) => {
+    c.fillStyle = '#c9c4b8'; c.fillRect(0, 0, w, h); speckle(c, w, h, 1200, 0.05, true);
+    c.strokeStyle = 'rgba(90,85,75,.35)'; c.lineWidth = 2; for (let x = 0; x <= w; x += 64) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke(); }
+    c.fillStyle = 'rgba(60,55,50,.5)'; c.fillRect(0, h - 22, w, 22);
+  });
+  const sheet = canvasTex(256, 256, (c, w, h) => {
+    for (let x = 0; x < w; x += 12) { c.fillStyle = x % 24 ? '#8a8f86' : '#70756c'; c.fillRect(x, 0, 12, h); }
+    for (let i = 0; i < 30; i++) { c.fillStyle = 'rgba(120,60,20,.25)'; c.fillRect(Math.random() * w, Math.random() * h, 6, 14); }
+  });
+  for (const r of L.soft ?? []) {
+    const [x0, z0, x1, z1] = r, w = x1 - x0, d = z1 - z0, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+    const metal = buildingAt(cx, cz).style === 'metal';
+    const mat = new THREE.MeshLambertMaterial({ map: metal ? sheet : drywall });
+    // thinner than a real wall, so it reads as flimsy; the gap either side is filled by the frame below
+    const thin = w < d ? [0.25, d] : [w, 0.25];
+    const m = new THREE.Mesh(boxGeo(thin[0], CEIL, thin[1], 2), mat); m.position.set(cx, CEIL / 2, cz); g.add(m);
+    const box = { min: V(cx - thin[0] / 2, 0, cz - thin[1] / 2), max: V(cx + thin[0] / 2, CEIL, cz + thin[1] / 2) };
+    const sw = { rect: r, mesh: m, box, gone: false, metal };
+    box.soft = sw; boxes.push(box); SOFT.push(sw);
+  }
+
   // a beam over every doorway so they read as doors
   const frameMat = new THREE.MeshLambertMaterial({ color: 0x23272d });
   for (const [x0, z0, x1, z1] of L.doors) {
@@ -280,6 +305,15 @@ export function waterBox(L) {
   return { min: V(x0, 0, z0), max: V(x1, 1.1, z1), wall: true };
 }
 
+// blow a soft wall open: gone from the world, walkable for the guards
+export function breachSoft(sw, boxes) {
+  if (sw.gone) return;
+  sw.gone = true; sw.mesh.visible = false;
+  const i = boxes.indexOf(sw.box); if (i >= 0) boxes.splice(i, 1);
+  const [x0, z0, x1, z1] = sw.rect;
+  renav(boxes, x0 - 1, z0 - 1, x1 + 1, z1 + 1);
+}
+
 // ---------------------------------------------------------------- navigation
 const NS = 0.5;
 let NN = 0, blocked, gScore, from, stamp, closed, run = 0;
@@ -290,6 +324,16 @@ function buildNav(boxes) {
     const x = -HALF + (i + 0.5) * NS, z = -HALF + (j + 0.5) * NS, m = 0.35;
     for (const b of boxes) {
       if (b.min.y > 1) continue;   // beams are overhead
+      if (x > b.min.x - m && x < b.max.x + m && z > b.min.z - m && z < b.max.z + m) { blocked[j * NN + i] = 1; break; }
+    }
+  }
+}
+function renav(boxes, x0, z0, x1, z1) {
+  for (let j = cell(z0); j <= cell(z1); j++) for (let i = cell(x0); i <= cell(x1); i++) {
+    const x = -HALF + (i + 0.5) * NS, z = -HALF + (j + 0.5) * NS, m = 0.35;
+    blocked[j * NN + i] = 0;
+    for (const b of boxes) {
+      if (b.min.y > 1) continue;
       if (x > b.min.x - m && x < b.max.x + m && z > b.min.z - m && z < b.max.z + m) { blocked[j * NN + i] = 1; break; }
     }
   }
